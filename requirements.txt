@@ -1,1 +1,5 @@
-
+matplotlib
+numpy
+requests
+torch
+torchvision
