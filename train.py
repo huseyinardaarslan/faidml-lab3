@@ -4,6 +4,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import wandb
 
 from data.tiny_imagenet import create_dataloaders, download_and_extract_tiny_imagenet
 from models import TinyImageNetCNN
@@ -18,6 +19,8 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--wandb-project", type=str, default="tiny-imagenet-training")
+    parser.add_argument("--wandb-run-name", type=str, default=None)
     return parser.parse_args()
 
 
@@ -39,6 +42,21 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
+    wandb.init(
+        project=args.wandb_project,
+        name=args.wandb_run_name,
+        config={
+            "dataset_root": args.dataset_root,
+            "batch_size": args.batch_size,
+            "epochs": args.epochs,
+            "learning_rate": args.lr,
+            "num_workers": args.num_workers,
+            "num_classes": len(class_names),
+            "device": device,
+        },
+    )
+    wandb.watch(model, log="all", log_freq=100)
+
     print(f"Number of classes: {len(class_names)}")
     print(f"Number of samples: {len(train_loader.dataset)}")
     print(f"Validation loader available: {val_loader is not None}")
@@ -46,27 +64,39 @@ def main():
 
     plot_one_example_per_class(train_loader, class_names, max_classes=10)
 
-    for epoch in range(args.epochs):
-        train_loss, train_acc = train_one_epoch(
-            model=model,
-            dataloader=train_loader,
-            criterion=criterion,
-            optimizer=optimizer,
-            device=device,
-        )
-        print(
-            f"Epoch {epoch + 1}/{args.epochs} - "
-            f"train loss: {train_loss:.4f}, train acc: {train_acc:.4f}"
-        )
-
-        if val_loader is not None:
-            val_loss, val_acc = evaluate(
+    try:
+        for epoch in range(args.epochs):
+            train_loss, train_acc = train_one_epoch(
                 model=model,
-                dataloader=val_loader,
+                dataloader=train_loader,
                 criterion=criterion,
+                optimizer=optimizer,
                 device=device,
             )
-            print(f"Validation - loss: {val_loss:.4f}, acc: {val_acc:.4f}")
+            print(
+                f"Epoch {epoch + 1}/{args.epochs} - "
+                f"train loss: {train_loss:.4f}, train acc: {train_acc:.4f}"
+            )
+            log_data = {
+                "epoch": epoch + 1,
+                "train/loss": train_loss,
+                "train/acc": train_acc,
+            }
+
+            if val_loader is not None:
+                val_loss, val_acc = evaluate(
+                    model=model,
+                    dataloader=val_loader,
+                    criterion=criterion,
+                    device=device,
+                )
+                print(f"Validation - loss: {val_loss:.4f}, acc: {val_acc:.4f}")
+                log_data["val/loss"] = val_loss
+                log_data["val/acc"] = val_acc
+
+            wandb.log(log_data)
+    finally:
+        wandb.finish()
 
     checkpoint_path = "checkpoints/tiny_imagenet_cnn.pth"
     torch.save(
